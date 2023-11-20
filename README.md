@@ -8,7 +8,7 @@
 > 💡希望添加的功能可直接提交PR
 - [x] 指定案件 ID 的庭审视频爬取
 - [x] 指定省份的庭审视频爬取
-- [x] 基于 sqlit3 去重
+- [x] 基于 sqlite3 去重
 - [ ] 基于 redis 去重
 - [ ] 任务种子队列，断点续爬
 
@@ -16,7 +16,7 @@
 
 ## 🤖脚本
 > **trial.py:**
-- 运行时需要提供 --area_code 和 --save_path 参数, area_code 代表不同省份的编号, 具体编号可以查看[provincial-code.txt](https://github.com/IcelandT/China-Trial-Spider/blob/main/provincial-code.txt)文件, save_path 为视频保存路径, 默认为当前项目路径下的 save_video.
+- 运行时需要提供 --area_code 和 --save_path 参数, area_code 代表不同省份的编号, 具体编号可以查看[provincial-code.txt](https://github.com/IcelandT/China-Trial-Spider/blob/main/provincial-code.txt)文件。 save_path 为视频保存路径, 默认为当前项目路径下的 save_video。
 ```console
 食用方法 python3 trial.py -ac 350000
 ```
