@@ -1,0 +1,6 @@
+loguru==0.7.0
+pandas==2.1.3
+parsel==1.8.1
+Requests==2.31.0
+rich==13.7.0
+SQLAlchemy==2.0.23
