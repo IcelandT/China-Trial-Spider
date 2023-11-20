@@ -81,7 +81,7 @@ class SqliteDB(object):
 
         end_time = time.time()
         after_dedup_value_nums = len(after_dedup)
-        logger.info("累计{}条任务, 剔除重复任务{}条, 剩余任务{}条, 去重耗时{}s".format(
+        logger.info("累计{}条任务, 删除重复任务{}条, 剩余任务{}条, 去重耗时{}s".format(
             before_dedup_value_nums,
             int(before_dedup_value_nums) - int(after_dedup_value_nums),
             after_dedup_value_nums,

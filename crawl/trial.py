@@ -102,17 +102,14 @@ class TrialCrawl:
         table.add_column("Publish", style="gray74", justify="center", no_wrap=True)
         table.add_column("Title", style="gray74", justify="center")
         table.add_column("No", style="gray74", justify="center")
-        table.add_column("Url", style="gray74", justify="center")
+        table.add_column("Id", style="gray74", justify="center")
 
         table.add_row(
             case["time"],
             case["caseTitle"],
             case["caseNo"],
-            "http://tingshen.court.gov.cn/live/{}".format(case["caseId"])
+            str(case["caseId"])
         )
-
-        current_time = datetime.datetime.now()
-        formatted_time = current_time.strftime("%H:%M:%S")
         self._header()
         self.console.print(table, justify="center")
 
@@ -269,7 +266,7 @@ class TrialCrawl:
 
         time.sleep(random.uniform(3, 3.5))
 
-    def _download_engine(self, cases: list[dict]):
+    def _download_engine(self, cases: list[dict]) -> None:
         """
         视频解析下载引擎
         :param cases: 去重后的 cases 列表   (后期优化使用任务队列？ 方便管理任务，更新 cookie)
