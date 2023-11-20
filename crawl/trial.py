@@ -99,14 +99,16 @@ class TrialCrawl:
             box=box.MINIMAL
         )
 
-        table.add_column("Publish", style="cyan", justify="center", no_wrap=True)
-        table.add_column("Title", style="yellow", justify="center")
-        table.add_column("No", justify="center", style="green")
+        table.add_column("Publish", style="gray74", justify="center", no_wrap=True)
+        table.add_column("Title", style="gray74", justify="center")
+        table.add_column("No", style="gray74", justify="center")
+        table.add_column("Url", style="gray74", justify="center")
 
         table.add_row(
             case["time"],
             case["caseTitle"],
-            case["caseNo"]
+            case["caseNo"],
+            "http://tingshen.court.gov.cn/live/{}".format(case["caseId"])
         )
 
         current_time = datetime.datetime.now()
