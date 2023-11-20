@@ -23,7 +23,35 @@ python3 trial.py -ac 350000
 
 ---
 
-## 🧇部署方法
-- git clone https://github.com/IcelandT/China-Trial-Spider.git 至本地
-- 安装运行所需的依赖 pip install -r requirements.txt
-- 项目默认使用 sqlite3, 如需使用 redis 请自行安装
+## 🧇食用方法
+- 将项目clone至本地机器
+```shell
+git clone https://github.com/IcelandT/China-Trial-Spider.git 
+```
+- 安装项目运行时所需的依赖 
+```shell
+> pip install -r requirements.txt
+```
+- 前往配置 settings 文件, 添加 cookie 信息, cookie需要登入后自行抓包获取
+```python
+# Cookies
+COOKIE = ""
+```
+- 运行项目, 选择需要爬取的省份, 省份编号请前往 provincial-code.txt 文件查看
+```shell
+python3 trial.py -ac 350000
+```
+
+---
+
+## 📸截图
+<details>
+<summary>🔎点击展开截图</summary>
+
+项目运行时:
+![yunxin1.png](yunxin1.png)
+
+sqlite数据库情况:
+![yunxin2.png](yunxin2.png)
+
+</details>
