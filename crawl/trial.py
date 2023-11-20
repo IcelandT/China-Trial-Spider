@@ -6,12 +6,18 @@ import time
 import random
 import datetime
 import argparse
+from queue import Queue
 from typing import Generator
 from random import choice
 from concurrent.futures import ThreadPoolExecutor
 
 import parsel
 import requests
+from rich.progress import Progress, SpinnerColumn, TextColumn, TaskID
+from rich.console import Console
+from rich.highlighter import ReprHighlighter
+from rich.table import Table
+from rich import box
 from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.getcwd())))
@@ -20,11 +26,22 @@ from China_Trial.database import SqliteDB
 
 
 class TrialCrawl:
-    def __init__(self, area_code: str) -> None:
+    def __init__(self, area_code: str, save_path: str) -> None:
         self.area_code = area_code
+        self.save_path = self._check_is_save_path(save_path)
         self.session = requests.Session()
 
         self.sqlite = SqliteDB()
+
+        self.thread_pool = ThreadPoolExecutor(max_workers=15)
+        self.console = Console()
+
+    @staticmethod
+    def _check_is_save_path(save_path: str) -> str:
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+
+        return save_path
 
     @staticmethod
     def _encapsulate_headers() -> dict:
@@ -46,6 +63,61 @@ class TrialCrawl:
     def _response_to_dom(response: requests.Response) -> parsel.Selector:
         """ 将响应的 response 转换成 dom 树 """
         return parsel.Selector(response.text)
+
+    @staticmethod
+    def _progress() -> Progress:
+        """ 进度条 """
+        progress = Progress(
+            SpinnerColumn(spinner_name='dots12', style='gray74'),
+            TextColumn("[gray74]{task.fields[filename]}", justify="right"),
+            " • ",
+            "[gray74]{task.completed}/{task.total}"
+            " • ",
+            "[gray74]{task.percentage:>3.0f}%",
+        )
+        return progress
+
+    @staticmethod
+    def download_ts_file(ts_file: dict, ts_content_buffer: list, progress: Progress, task_id: TaskID) -> None:
+        """ 下载 ts 文件 """
+        chunks = []
+        response = requests.get(url=ts_file["ts_url"], stream=True)
+        for chunk in response.iter_content(chunk_size=2048):
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+        ts_content_buffer.append((ts_file["count"], b''.join(chunks)))
+        progress.update(task_id, advance=1)
+
+    def _table(self, case: dict) -> None:
+        """  """
+        table = Table(
+            title="Trial Information",
+            caption="table",
+            caption_justify="right",
+            box=box.MINIMAL
+        )
+
+        table.add_column("Publish", style="cyan", justify="center", no_wrap=True)
+        table.add_column("Title", style="yellow", justify="center")
+        table.add_column("No", justify="center", style="green")
+
+        table.add_row(
+            case["time"],
+            case["caseTitle"],
+            case["caseNo"]
+        )
+
+        current_time = datetime.datetime.now()
+        formatted_time = current_time.strftime("%H:%M:%S")
+        self._header()
+        self.console.print(table, justify="center")
+
+    def _header(self) -> None:
+        self.console.print()
+        self.console.rule(style="gray74")
+        self.console.print()
 
     def _check_cookie_availability(self) -> bool:
         """ 检查 cookie 可用性 """
@@ -115,7 +187,7 @@ class TrialCrawl:
             logger.info(f"当前解析  {court_information['courtName']}第{page}页")
 
             response = self.session.get(url=query_api, headers=self._encapsulate_headers(), params=params).json()
-            time.sleep(random.uniform(5, 8))
+            time.sleep(random.uniform(5, 7))
 
             # 提取 caseId
             cases = []
@@ -161,8 +233,39 @@ class TrialCrawl:
         response = self.session.get(url=play_url).text
         m3u8_file = re.findall("url: '(.*?)',", response)[0]
         if 'http' not in m3u8_file:
-            url = 'http:' + m3u8_file
+            m3u8_file = 'http:' + m3u8_file
         return m3u8_file
+
+    def parse_ts_file(self, m3u8_url: str) -> Queue:
+        """
+        获取 m3u8 文件中所有 ts 文件, 并返回 ts 文件队列
+        :param m3u8_url:
+        :return:
+        """
+        ts_count = 1
+        ts_task_queue = Queue()
+        response = self.session.get(url=m3u8_url).text
+        for ts_file in response.split('\n'):
+            if '#' in ts_file or not ts_file:
+                continue
+            if 'http' not in ts_file:
+                ts_file = 'http:' + ts_file
+
+            ts_task_queue.put({'count': ts_count, 'ts_url': ts_file})
+            ts_count += 1
+
+        return ts_task_queue
+
+    def save_video(self, ts_content_buffer: list, case: dict) -> None:
+        """ 保存 """
+        case_title = case["caseTitle"]
+        save_file_name = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '', case_title) + '.mp4'
+        save_file_path = os.path.join(self.save_path, save_file_name)
+        with open(save_file_path, mode='wb') as f:
+            for buffer in ts_content_buffer:
+                f.write(buffer[1])
+
+        time.sleep(random.uniform(3, 3.5))
 
     def _download_engine(self, cases: list[dict]):
         """
@@ -171,8 +274,30 @@ class TrialCrawl:
         :return:
         """
         for case in cases:
+            self._table(case)
             play_url = self.parse_play_url(case)
             m3u8_file = self.parse_m3u8_file(play_url)
+            ts_task_queue = self.parse_ts_file(m3u8_file)
+
+            # 实例化进度条
+            ts_content_buffer = []
+            thread_futures = []
+            progress = self._progress()
+            task_id = progress.add_task("Download", filename=case["caseTitle"], total=ts_task_queue.qsize())
+            with progress:
+                progress.update(task_id)
+                while not ts_task_queue.empty():
+                    future = self.thread_pool.submit(self.download_ts_file, ts_task_queue.get(),
+                                                     ts_content_buffer, progress, task_id)
+                    thread_futures.append(future)
+
+                # 等待任务完成
+                for tf in thread_futures:
+                    tf.result()
+
+            # 保存
+            ts_content_buffer = sorted(ts_content_buffer, key=lambda x: x[0])
+            self.save_video(ts_content_buffer, case)
 
     def _scheduler(self) -> None:
         """ 调度器 """
@@ -187,13 +312,19 @@ class TrialCrawl:
 
     def start(self) -> None:
         self._scheduler()
+        self.thread_pool.shutdown()
 
 
 if __name__ == '__main__':
+    current_location = os.getcwd()
+    default_save_path = os.path.join(os.path.dirname(current_location), "save_video")
+
     parser = argparse.ArgumentParser(description="")
     parser.add_argument("-ac", "--area_code", type=str, help="爬取的省份code", required=True)
+    parser.add_argument("-sp", "--save_path", type=str, help="保存路径", default=default_save_path)
 
     args = parser.parse_args()
     ac = args.area_code
+    sp = args.save_path
 
-    TrialCrawl(area_code=ac).start()
+    TrialCrawl(area_code=ac, save_path=sp).start()
