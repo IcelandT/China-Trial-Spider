@@ -17,8 +17,8 @@
 ## 🤖脚本
 > **trial.py:**
 - 运行时需要提供 --area_code 和 --save_path 参数, area_code 代表不同省份的编号, 具体编号可以查看[provincial-code.txt](https://github.com/IcelandT/China-Trial-Spider/blob/main/provincial-code.txt)文件。 save_path 为视频保存路径, 默认为当前项目路径下的 save_video。
-```console
-食用方法 python3 trial.py -ac 350000
+```shell
+python3 trial.py -ac 350000
 ```
 
 ---
