@@ -15,7 +15,6 @@ import parsel
 import requests
 from rich.progress import Progress, SpinnerColumn, TextColumn, TaskID
 from rich.console import Console
-from rich.highlighter import ReprHighlighter
 from rich.table import Table
 from rich import box
 from loguru import logger
