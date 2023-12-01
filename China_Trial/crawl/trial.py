@@ -19,7 +19,7 @@ from rich.table import Table
 from rich import box
 from loguru import logger
 
-sys.path.append(os.path.dirname(os.getcwd()))
+sys.path.append(os.path.dirname(os.path.dirname(os.getcwd())))
 from China_Trial import settings
 from China_Trial.database import SqliteDB
 
