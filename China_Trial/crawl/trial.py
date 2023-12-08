@@ -21,13 +21,13 @@ from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.getcwd())))
 from China_Trial import settings
-from China_Trial.database import SqliteDB
+from China_Trial.db import SqliteDB
 
 
 class TrialCrawl:
     def __init__(self, area_code: str, save_path: str) -> None:
         self.area_code = area_code
-        self.save_path = self._check_is_save_path(save_path)
+        self.save_path = save_path
         self.session = requests.Session()
 
         self.sqlite = SqliteDB()
@@ -36,11 +36,15 @@ class TrialCrawl:
         self.console = Console()
 
     @staticmethod
-    def _check_is_save_path(save_path: str) -> str:
-        if not os.path.exists(save_path):
-            os.mkdir(save_path)
+    def _check_the_folder_exists(path: str) -> bool:
+        """ 查看文件夹是否存在 """
+        return os.path.exists(path)
 
-        return save_path
+    @staticmethod
+    def _create_folder(path: str) -> None:
+        """ 创建文件夹 """
+        os.mkdir(path)
+        logger.debug(f"创建文件夹 {path}")
 
     @staticmethod
     def _encapsulate_headers() -> dict:
@@ -70,7 +74,7 @@ class TrialCrawl:
             SpinnerColumn(spinner_name='dots12', style='gray74'),
             TextColumn("[gray74]{task.fields[filename]}", justify="right"),
             " • ",
-            "[gray74]{task.completed}/{task.total}"
+            "[gray74]{task.completed}/{task.total} ts files"
             " • ",
             "[gray74]{task.percentage:>3.0f}%",
         )
@@ -78,7 +82,7 @@ class TrialCrawl:
 
     @staticmethod
     def download_ts_file(ts_file: dict, ts_content_buffer: list, progress: Progress, task_id: TaskID) -> None:
-        """ 下载 ts 文件 """
+        """ 下载视频 ts 文件 """
         chunks = []
         response = requests.get(url=ts_file["ts_url"], stream=True)
         for chunk in response.iter_content(chunk_size=2048):
@@ -90,7 +94,7 @@ class TrialCrawl:
         progress.update(task_id, advance=1)
 
     def _table(self, case: dict) -> None:
-        """  """
+        """ 表格显示 """
         table = Table(
             title="Trial Information",
             caption="table",
@@ -128,6 +132,8 @@ class TrialCrawl:
         if not username:
             logger.error('cookie 已失效, 请及时更新')
             return False
+        else:
+            return True
 
     def parse_province_court(self) -> list[dict]:
         """ 查询省份所有法院信息 """
@@ -182,25 +188,22 @@ class TrialCrawl:
                 "timeFlag": "0",
                 "keywords": ""
             }
-            logger.info(f"当前解析  {court_information['courtName']}第{page}页")
+            logger.info(f"当前解析 {court_information['courtName']}第{page}页")
 
             response = self.session.get(url=query_api, headers=self._encapsulate_headers(), params=params).json()
-            time.sleep(random.uniform(5, 7))
+            time.sleep(random.uniform(5, 6))
 
-            # 提取 caseId
-            cases = []
+            # 提取案件相关信息
             for result in response["resultList"]:
                 dt_object = datetime.datetime.fromtimestamp(float(str(result["beginTime"])[:-3]))
                 readable_time = dt_object.strftime('%Y-%m-%d %H:%M:%S')
-                cases.append({
+                yield {
                     "caseName": result["courtName"],
                     "caseId": result["caseId"],
                     "caseNo": result["caseNo"],
                     "caseTitle": result["title"],
                     "time": readable_time
-                })
-
-            yield cases
+                }
 
     def parse_play_url(self, case: dict) -> str:
         """
@@ -263,54 +266,66 @@ class TrialCrawl:
             for buffer in ts_content_buffer:
                 f.write(buffer[1])
 
-        time.sleep(random.uniform(3, 3.5))
+        time.sleep(random.uniform(2.5, 3))
 
-    def _download_engine(self, cases: list[dict]) -> None:
+    def _download_engine(self, case: dict) -> None:
         """
         视频解析下载引擎
         :param cases: 去重后的 cases 列表   (后期优化使用任务队列？ 方便管理任务，更新 cookie)
         :return:
         """
-        for case in cases:
-            self._table(case)
-            play_url = self.parse_play_url(case)
-            m3u8_file = self.parse_m3u8_file(play_url)
-            ts_task_queue = self.parse_ts_file(m3u8_file)
+        self._table(case)
+        play_url = self.parse_play_url(case)
+        m3u8_file = self.parse_m3u8_file(play_url)
+        ts_task_queue = self.parse_ts_file(m3u8_file)
 
-            # 实例化进度条
-            ts_content_buffer = []
-            thread_futures = []
-            progress = self._progress()
-            task_id = progress.add_task("Download", filename=case["caseTitle"], total=ts_task_queue.qsize())
-            with progress:
-                progress.update(task_id)
-                while not ts_task_queue.empty():
-                    future = self.thread_pool.submit(self.download_ts_file, ts_task_queue.get(),
-                                                     ts_content_buffer, progress, task_id)
-                    thread_futures.append(future)
+        # 实例化进度条
+        ts_content_buffer = []
+        thread_futures = []
+        progress = self._progress()
+        task_id = progress.add_task("Download", filename=case["caseTitle"], total=ts_task_queue.qsize())
+        with progress:
+            progress.update(task_id)
+            while not ts_task_queue.empty():
+                future = self.thread_pool.submit(self.download_ts_file, ts_task_queue.get(),
+                                                 ts_content_buffer, progress, task_id)
+                thread_futures.append(future)
 
-                # 等待任务完成
-                for tf in thread_futures:
-                    tf.result()
+            # 等待任务完成
+            for tf in thread_futures:
+                tf.result()
 
-            # 保存
-            ts_content_buffer = sorted(ts_content_buffer, key=lambda x: x[0])
-            self.save_video(ts_content_buffer, case)
+        # 保存
+        ts_content_buffer = sorted(ts_content_buffer, key=lambda x: x[0])
+        self.save_video(ts_content_buffer, case)
 
     def _scheduler(self) -> None:
         """ 调度器 """
-        if self._check_cookie_availability() is not False:
+        # 检查cookie是否可用
+        if self._check_cookie_availability() is True:
             court_information_list = self.parse_province_court()  # 获取所有法庭信息
             for court_information in court_information_list:
                 # 获取案件信息
-                for cases in self.parse_case_id(court_information):
+                for case in self.parse_case_id(court_information):
                     # 对案件 id 进行去重
-                    after_dedup_cases = self.sqlite.sqlite_dedup(cases)
-                    self._download_engine(after_dedup_cases)
+                    if not self.sqlite.sqlite_dedup(case):
+                        self._download_engine(case)
+                        self.sqlite.insert_value(case)
+
+    def _engine(self) -> None:
+        """ 系统引擎 """
+        # 检查保存路径是否存在
+        if self._check_the_folder_exists(self.save_path) is False:
+            self._create_folder(self.save_path)
+
+        # 启动调度器
+        self._scheduler()
+
+        # 关闭线程池
+        self.thread_pool.shutdown()
 
     def start(self) -> None:
-        self._scheduler()
-        self.thread_pool.shutdown()
+        self._engine()
 
 
 if __name__ == '__main__':
