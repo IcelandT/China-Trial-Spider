@@ -24,7 +24,7 @@ class TrialSurface(Base):
 
 class SqliteDB(object):
     def __init__(self) -> None:
-        db_path = os.path.dirname(os.getcwd()) + "\\" + "db" + "\\" + "trial.db"
+        db_path = os.path.dirname(os.getcwd()) + "\\" + "database" + "\\" + "trial.db"
         # 建立 sqlite 连接
         sqlite_engine = create_engine(f"sqlite:///{db_path}", echo=False)
         Base.metadata.create_all(sqlite_engine, checkfirst=True)
@@ -39,9 +39,11 @@ class SqliteDB(object):
         :param case_id: 案件 id
         :return: 返回 True 时则存在相同的 caseId, 反之亦然
         """
+        start_time = time.time()
         count = self.session.query(TrialSurface).filter_by(caseId=case_id).count()
+        end_time = time.time()
         if count > 0:
-            logger.debug(f'caseId已存在  caseId = {case_id}')
+            logger.debug(f'caseId已存在  caseId = {case_id}, 查询耗时 {end_time - start_time} s')
             return True
         else:
             return False
@@ -62,29 +64,14 @@ class SqliteDB(object):
         self.session.commit()
         logger.debug(f"插入数据 {case}")
 
-    def sqlite_dedup(self, cases: list[dict]) -> list[dict]:
+    def sqlite_dedup(self, case: dict) -> bool:
         """
         去重模块, 针对 caseId 进行去重
-        :param cases:
-        :return:
+        :param case:
+        :return: 存在则返回True, 不存在返回False
         """
-        after_dedup = []
-        start_time = time.time()
-        before_dedup_value_nums = len(cases)
-        for case in cases:
-            # 如果表中存在 caseId 则跳过
-            if self.query_quantity(case["caseId"]):
-                continue
-
-            self.insert_value(case)
-            after_dedup.append(case)
-
-        end_time = time.time()
-        after_dedup_value_nums = len(after_dedup)
-        logger.info("累计{}条任务, 删除重复任务{}条, 剩余任务{}条, 去重耗时{}s".format(
-            before_dedup_value_nums,
-            int(before_dedup_value_nums) - int(after_dedup_value_nums),
-            after_dedup_value_nums,
-            "{:.2f}".format(end_time - start_time)
-        ))
-        return after_dedup
+        # 如果表中存在 caseId 则跳过
+        if self.query_quantity(case["caseId"]):
+            return True
+        else:
+            return False
