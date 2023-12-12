@@ -39,11 +39,9 @@ class SqliteDB(object):
         :param case_id: 案件 id
         :return: 返回 True 时则存在相同的 caseId, 反之亦然
         """
-        start_time = time.time()
         count = self.session.query(TrialSurface).filter_by(caseId=case_id).count()
-        end_time = time.time()
         if count > 0:
-            logger.debug(f'caseId已存在  caseId = {case_id}, 查询耗时 {end_time - start_time} s')
+            logger.debug(f'caseId已存在,  caseId = {case_id}')
             return True
         else:
             return False
