@@ -6,8 +6,9 @@ import time
 import random
 import datetime
 import argparse
+import pandas as pd
 from queue import Queue
-from typing import Generator
+from typing import Generator, Union
 from random import choice
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,6 +19,8 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 from loguru import logger
+from terminal_layout import Fore
+from terminal_layout.extensions.choice import Choice, StringStyle
 
 sys.path.append(os.path.dirname(os.path.dirname(os.getcwd())))
 from China_Trial import settings
@@ -25,7 +28,7 @@ from China_Trial.db import SqliteDB
 
 
 class TrialCrawl:
-    def __init__(self, area_code: str, save_path: str) -> None:
+    def __init__(self, area_code: str = None, save_path: str = None) -> None:
         self.area_code = area_code
         self.save_path = save_path
         self.session = requests.Session()
@@ -73,9 +76,9 @@ class TrialCrawl:
         progress = Progress(
             SpinnerColumn(spinner_name='dots12', style='gray74'),
             TextColumn("[gray74]{task.fields[filename]}", justify="right"),
-            " • ",
+            "•",
             "[gray74]{task.completed}/{task.total} ts files"
-            " • ",
+            " •",
             "[gray74]{task.percentage:>3.0f}%",
         )
         return progress
@@ -141,33 +144,45 @@ class TrialCrawl:
         params = {"areaCode": self.area_code}
         response = self.session.get(url=url, params=params, headers=self._encapsulate_headers()).json()
         courts = response.get('data').get('courts')
-        court_information_list = []
-        for court in courts:
-            # 跳过最高人民法院, 只获取最低级的辖区法院
-            if court["type"] == 2:
-                continue
+        # 市级名称
+        city_names = []
+        city_names_dict = {}
+        for index, court in enumerate(courts):
+            city_names.append(court["courtName"])
+            city_names_dict[court["courtName"]] = index
 
-            if court["courts"]:
-                for c in court["courts"]:
-                    court_information_list.append(
-                        {
-                            "courtName": c["courtName"],
-                            "courtCode": c["courtCode"],
-                            "courtLevel": int(c["type"]) - 1
-                        }
-                    )
-            else:
-                # 若无最低级的辖区法院, 则获取所在地的中级法院
-                court_information_list.append(
+        # 选择需要爬取的市级
+        c = Choice(
+            title="请选择要爬取的法院",
+            icon=">  ",
+            choices=city_names,
+            icon_style=StringStyle(fore=Fore.green),
+            selected_style=StringStyle(fore=Fore.green)
+        )
+        index, choice_case_name = c.get_choice()
+        case_name_index = city_names_dict[choice_case_name]
+
+        # 获取指定需爬取的市级下所有法院信息
+        current_city_cases = []
+        if courts[case_name_index]["courts"]:
+            for current_c in courts[case_name_index]["courts"]:
+                current_city_cases.append(
                     {
-                        "courtName": court["courtName"],
-                        "courtCode": court["courtCode"],
-                        "courtLevel": int(court["type"]) - 1
+                        "courtName": current_c["courtName"],
+                        "courtCode": current_c["courtCode"],
+                        "courtLevel": int(current_c["type"]) - 1
                     }
                 )
-
-        logger.success(f"共获取{courts[0]['areaName']}{len(court_information_list)}家法院信息")
-        return court_information_list
+        else:
+            current_city_cases.append(
+                {
+                    "courtName": courts[case_name_index]["courtName"],
+                    "courtCode": courts[case_name_index]["courtCode"],
+                    "courtLevel": int(courts[case_name_index]["type"]) - 1
+                }
+            )
+        logger.success(f"共获取{choice_case_name} {len(current_city_cases)}家法院信息")
+        return current_city_cases
 
     def parse_case_id(self, court_information: dict) -> Generator:
         """ 获取当地法庭所上传的庭审视频 """
@@ -233,11 +248,15 @@ class TrialCrawl:
         """
         response = self.session.get(url=play_url).text
         m3u8_file = re.findall("url: '(.*?)',", response)[0]
+        if 'm3u8' not in m3u8_file:
+            return ""
+
         if 'http' not in m3u8_file:
             m3u8_file = 'http:' + m3u8_file
+
         return m3u8_file
 
-    def parse_ts_file(self, m3u8_url: str) -> Queue:
+    def parse_ts_file(self, m3u8_url: str) -> Union[Queue, bool]:
         """
         获取 m3u8 文件中所有 ts 文件, 并返回 ts 文件队列
         :param m3u8_url:
@@ -245,8 +264,11 @@ class TrialCrawl:
         """
         ts_count = 1
         ts_task_queue = Queue()
-        response = self.session.get(url=m3u8_url).text
-        for ts_file in response.split('\n'):
+        response = self.session.get(url=m3u8_url)
+        if response.status_code != 200:
+            return False
+
+        for ts_file in response.text.split('\n'):
             if '#' in ts_file or not ts_file:
                 continue
             if 'http' not in ts_file:
@@ -259,7 +281,7 @@ class TrialCrawl:
 
     def save_video(self, ts_content_buffer: list, case: dict) -> None:
         """ 保存 """
-        case_title = case["caseTitle"]
+        case_title = case["caseTitle"] + "_" + str(case["caseId"])
         save_file_name = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '', case_title) + '.mp4'
         save_file_path = os.path.join(self.save_path, save_file_name)
         with open(save_file_path, mode='wb') as f:
@@ -268,22 +290,31 @@ class TrialCrawl:
 
         time.sleep(random.uniform(2.5, 3))
 
-    def _download_engine(self, case: dict) -> None:
+    def download_engine(self, case: dict) -> None:
         """
         视频解析下载引擎
-        :param cases: 去重后的 cases 列表   (后期优化使用任务队列？ 方便管理任务，更新 cookie)
+        :param case: 案件的详细信息
         :return:
         """
-        self._table(case)
+        # self._table(case)
         play_url = self.parse_play_url(case)
         m3u8_file = self.parse_m3u8_file(play_url)
+        if not m3u8_file:
+            return
+
         ts_task_queue = self.parse_ts_file(m3u8_file)
+        if ts_task_queue is False:
+            return
 
         # 实例化进度条
         ts_content_buffer = []
         thread_futures = []
         progress = self._progress()
-        task_id = progress.add_task("Download", filename=case["caseTitle"], total=ts_task_queue.qsize())
+        task_id = progress.add_task(
+            "Download",
+            filename=case["caseTitle"] + "_" + str(case["caseId"]),
+            total=ts_task_queue.qsize()
+        )
         with progress:
             progress.update(task_id)
             while not ts_task_queue.empty():
@@ -309,7 +340,7 @@ class TrialCrawl:
                 for case in self.parse_case_id(court_information):
                     # 对案件 id 进行去重
                     if not self.sqlite.sqlite_dedup(case):
-                        self._download_engine(case)
+                        self.download_engine(case)
                         self.sqlite.insert_value(case)
 
     def _engine(self) -> None:
@@ -333,11 +364,24 @@ if __name__ == '__main__':
     default_save_path = os.path.join(os.path.dirname(current_location), "save_video")
 
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("-ac", "--area_code", type=str, help="爬取的省份code", required=True)
+    parser.add_argument("-ac", "--area_code", type=str, help="爬取的省份code")
     parser.add_argument("-sp", "--save_path", type=str, help="保存路径", default=default_save_path)
+    parser.add_argument("-f", "--file", type=str, help="file path")
 
     args = parser.parse_args()
     ac = args.area_code
     sp = args.save_path
-
-    TrialCrawl(area_code=ac, save_path=sp).start()
+    file_path = args.file
+    if file_path:
+        df = pd.read_excel(file_path, sheet_name="贵州")
+        urls = df["链接"].tolist()
+        ids = [url.split("/")[-1] for url in urls]
+        names = df["案件名"].tolist()
+        for i, n in zip(ids, names):
+            data_dict = {
+                "caseId": i,
+                "caseTitle": i
+            }
+            TrialCrawl(save_path=sp).download_engine(data_dict)
+    else:
+        TrialCrawl(area_code=ac, save_path=sp).start()
